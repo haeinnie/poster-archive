@@ -1,0 +1,6 @@
+{
+  "name": "Poster Archive",
+  "description": "영화, 전시, 그래픽 디자인 포스터를 수집하고 감상할 수 있는 미니멀하고 아름다운 감성 아카이브 플랫폼",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
