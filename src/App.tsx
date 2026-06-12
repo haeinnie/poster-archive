@@ -18,26 +18,26 @@ export default function App() {
   const [posters, setPosters] = useState<Poster[]>(() => {
     // 1. URL 파라미터에 전달된 공유 데이터가 있는지 먼저 확인합니다.
     if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const sharedData = params.get('shared_posters');
-      if (sharedData) {
-        try {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const sharedData = params.get('shared_posters');
+        if (sharedData) {
           // URL safe Base64 복호화 후 한글 깨짐 방지 처리
           const decoded = decodeURIComponent(atob(sharedData));
           const parsed = JSON.parse(decoded);
           if (Array.isArray(parsed) && parsed.length > 0) {
             return parsed;
           }
-        } catch (e) {
-          console.error('Failed to parse shared URL posters data:', e);
         }
+      } catch (e) {
+        console.error('Failed to parse shared URL posters data:', e);
       }
     }
 
     // 2. URL 공유 데이터가 없다면 기존 로컬스토리지 데이터를 확인합니다.
-    const saved = localStorage.getItem('poster_archive_items');
-    if (saved) {
-      try {
+    try {
+      const saved = localStorage.getItem('poster_archive_items');
+      if (saved) {
         const loaded: Poster[] = JSON.parse(saved);
         return loaded
           .filter((p) => p.id !== 'default-2')
@@ -47,10 +47,11 @@ export default function App() {
             }
             return p;
           });
-      } catch (e) {
-        return INITIAL_POSTERS;
       }
+    } catch (e) {
+      console.error('Failed to parse localStorage data:', e);
     }
+
     return INITIAL_POSTERS;
   });
 
@@ -93,11 +94,10 @@ export default function App() {
   // Load larger files/PDF database from IndexedDB on initial mount
   useEffect(() => {
     async function initDB() {
-      // 만약 URL 공유 파라미터가 이미 붙어있다면 IndexedDB 초기 로드를 스킵하여 공유된 데이터를 유지시킵니다.
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('shared_posters')) return;
-
       try {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('shared_posters')) return;
+
         const loaded = await loadPosters();
         if (loaded && loaded.length > 0) {
           setPosters((current) => {
@@ -118,9 +118,12 @@ export default function App() {
 
   // One-time client-side migration
   useEffect(() => {
-    // URL 공유 기능 작동 시 강제 마이그레이션 루프를 방지하기 위해 파라미터 존재 시 중단
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('shared_posters')) return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('shared_posters')) return;
+    } catch (e) {
+      return;
+    }
 
     setPosters((prevPosters) => {
       let changed = false;
@@ -209,7 +212,6 @@ export default function App() {
     return searchTarget.includes(searchQuery.toLowerCase());
   });
 
-  const totalCount = posters.length;
   const displayedPosters = filteredPosters.slice(0, visibleCount);
   const hasMore = visibleCount < filteredPosters.length;
 
@@ -241,7 +243,6 @@ export default function App() {
     if (confirm('아카이브를 초기 상태로 되돌리시겠습니까? 기본 포스터 컬렉션들이 복원됩니다.')) {
       setPosters(INITIAL_POSTERS);
       localStorage.setItem('poster_archive_items', JSON.stringify(INITIAL_POSTERS));
-      // URL 파라미터도 청소하여 초기 상태로 브라우저 경로 복구
       const cleanUrl = `${window.location.origin}${window.location.pathname}`;
       window.history.replaceState({ path: cleanUrl }, '', cleanUrl);
     }
@@ -318,7 +319,7 @@ export default function App() {
                     setIsDetailOpen(true);
                   }}
                   onDragStart={(e) => handleDragStart(e, poster.id)}
-                  onDragEnd={handleEnd = handleDragEnd}
+                  onDragEnd={handleDragEnd}
                   onDragOver={(e) => handleDragOver(e, poster.id)}
                   onDragEnter={(e) => handleDragEnter(e, poster.id)}
                   onDrop={(e) => handleDrop(e, poster.id)}
