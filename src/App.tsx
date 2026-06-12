@@ -16,12 +16,29 @@ import { Sparkles, Grid3X3, Filter, Layers, ArrowDown, RotateCcw } from 'lucide-
 
 export default function App() {
   const [posters, setPosters] = useState<Poster[]>(() => {
+    // 1. URL 파라미터에 전달된 공유 데이터가 있는지 먼저 확인합니다.
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const sharedData = params.get('shared_posters');
+      if (sharedData) {
+        try {
+          // URL safe Base64 복호화 후 한글 깨짐 방지 처리
+          const decoded = decodeURIComponent(atob(sharedData));
+          const parsed = JSON.parse(decoded);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        } catch (e) {
+          console.error('Failed to parse shared URL posters data:', e);
+        }
+      }
+    }
+
+    // 2. URL 공유 데이터가 없다면 기존 로컬스토리지 데이터를 확인합니다.
     const saved = localStorage.getItem('poster_archive_items');
     if (saved) {
       try {
         const loaded: Poster[] = JSON.parse(saved);
-        // Automatic migration for existing browser storage:
-        // Update first poster week to WEEK 05 and remove default-2 poster
         return loaded
           .filter((p) => p.id !== 'default-2')
           .map((p) => {
@@ -53,23 +70,37 @@ export default function App() {
   const [draggedPosterId, setDraggedPosterId] = useState<string | null>(null);
   const [dragOverPosterId, setDragOverPosterId] = useState<string | null>(null);
 
-  // Sync state to secure, large-capacity IndexedDB storage engine
+  // Sync state to secure, large-capacity IndexedDB storage engine 및 URL 동기화
   useEffect(() => {
     savePosters(posters).catch((err) => {
       if (err.message === 'QUOTA_EXCEEDED') {
         alert('주의: 브라우저 임시 저장 공간(LocalStorage)의 한계치를 초과하였습니다. 하지만 안전한 IndexedDB 시스템에 추가 본문이 정상적으로 저장되었으므로 사용하시는 데 문제가 없습니다. (브라우저 캐시를 완전히 지우면 업로드된 파일이 초기화될 수 있습니다.)');
       }
     });
+
+    // 사용자가 포스터를 추가/삭제/변경할 때마다 브라우저 주소창의 URL을 실시간 업데이트합니다.
+    try {
+      const jsonStr = JSON.stringify(posters);
+      // 한글 깨짐 방지 인코딩 후 Base64 압축 치환
+      const encodedPosters = btoa(encodeURIComponent(jsonStr));
+      const newUrl = `${window.location.origin}${window.location.pathname}?shared_posters=${encodedPosters}`;
+      window.history.replaceState({ path: newUrl }, '', newUrl);
+    } catch (err) {
+      console.error('Failed to update shareable URL:', err);
+    }
   }, [posters]);
 
   // Load larger files/PDF database from IndexedDB on initial mount
   useEffect(() => {
     async function initDB() {
+      // 만약 URL 공유 파라미터가 이미 붙어있다면 IndexedDB 초기 로드를 스킵하여 공유된 데이터를 유지시킵니다.
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('shared_posters')) return;
+
       try {
         const loaded = await loadPosters();
         if (loaded && loaded.length > 0) {
           setPosters((current) => {
-            // Compare structures to avoid unnecessary re-triggers
             const curStr = JSON.stringify(current);
             const loadStr = JSON.stringify(loaded);
             if (curStr !== loadStr) {
@@ -85,12 +116,15 @@ export default function App() {
     initDB();
   }, []);
 
-  // One-time client-side migration: Clean up and force update WEEK 04 to WEEK 05, restore default-1 if missing, and remove default-2
+  // One-time client-side migration
   useEffect(() => {
+    // URL 공유 기능 작동 시 강제 마이그레이션 루프를 방지하기 위해 파라미터 존재 시 중단
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('shared_posters')) return;
+
     setPosters((prevPosters) => {
       let changed = false;
 
-      // Check if default-1 is missing and restore it
       const hasDefault1 = prevPosters.some((p) => p.id === 'default-1');
       let baseList = [...prevPosters];
       if (!hasDefault1) {
@@ -170,7 +204,6 @@ export default function App() {
     }
   };
 
-  // Filter only by search (since category is unified as 'graphic')
   const filteredPosters = posters.filter((poster) => {
     const searchTarget = `${poster.title} ${poster.subtitle} ${poster.designer} ${poster.subject} ${poster.description}`.toLowerCase();
     return searchTarget.includes(searchQuery.toLowerCase());
@@ -188,7 +221,6 @@ export default function App() {
     }, 650);
   };
 
-  // Add brand new work handler
   const handleAddPoster = (newPosterData: Omit<Poster, 'id' | 'createdAt'>) => {
     const newPoster: Poster = {
       ...newPosterData,
@@ -198,7 +230,6 @@ export default function App() {
     setPosters((prev) => [newPoster, ...prev]);
   };
 
-  // Live updates directly from detail modal
   const handleUpdatePoster = (updatedPoster: Poster) => {
     setPosters((prev) =>
       prev.map((p) => (p.id === updatedPoster.id ? updatedPoster : p))
@@ -210,13 +241,15 @@ export default function App() {
     if (confirm('아카이브를 초기 상태로 되돌리시겠습니까? 기본 포스터 컬렉션들이 복원됩니다.')) {
       setPosters(INITIAL_POSTERS);
       localStorage.setItem('poster_archive_items', JSON.stringify(INITIAL_POSTERS));
+      // URL 파라미터도 청소하여 초기 상태로 브라우저 경로 복구
+      const cleanUrl = `${window.location.origin}${window.location.pathname}`;
+      window.history.replaceState({ path: cleanUrl }, '', cleanUrl);
     }
   };
 
   return (
     <div className="min-h-screen bg-warm-bg text-warm-dark font-sans flex flex-col selection:bg-neutral-900 selection:text-white">
       
-      {/* 1. Header Navigation */}
       <Header
         onAddClick={() => setIsAddOpen(true)}
         activeFilter="graphic"
@@ -229,7 +262,6 @@ export default function App() {
         }}
       />
 
-      {/* 2. Over-sized Clean Title Hero Section */}
       <section className="px-6 lg:px-12 pt-36 pb-72 border-b border-neutral-250 bg-gradient-to-b from-[#EAE8E1]/30 to-transparent">
         <div className="mx-auto max-w-7xl flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-4 max-w-2xl">
@@ -241,18 +273,12 @@ export default function App() {
               HGU 2026-1 GRAPHIC DESIGN
             </p>
           </div>
-
-
         </div>
       </section>
 
-      {/* 3. Main Catalog Feed with Filters and Grid */}
       <main className="flex-grow px-6 lg:px-12 pt-12 pb-12 mx-auto max-w-7xl w-full">
         
-        {/* Navigation / Sorting and Filter Badges */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-10 pb-6 border-b border-neutral-250">
-          
-          {/* Subgenres Filter Bar - Beautiful Unified Status Label */}
           <div className="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0 scrollbar-none font-display text-xs">
             <span className="text-neutral-450 flex items-center gap-1.5 uppercase tracking-[0.2em] text-[9px] font-bold">
               <Filter className="w-3 h-3 text-neutral-800" />
@@ -263,7 +289,6 @@ export default function App() {
             </span>
           </div>
 
-          {/* Quick Registry Action Tools */}
           <div className="flex items-center gap-4 text-xs font-mono">
             <button
               onClick={handleResetDefaults}
@@ -281,7 +306,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* 4. UNIFORM HIGH-POLISH GRID LAYOUT (1:1 or 2:3 세로 비율을 완벽히 매칭) */}
         <AnimatePresence mode="popLayout">
           {displayedPosters.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-8 md:gap-10 w-full" id="uniform-poster-grid">
@@ -294,7 +318,7 @@ export default function App() {
                     setIsDetailOpen(true);
                   }}
                   onDragStart={(e) => handleDragStart(e, poster.id)}
-                  onDragEnd={handleDragEnd}
+                  onDragEnd={handleEnd = handleDragEnd}
                   onDragOver={(e) => handleDragOver(e, poster.id)}
                   onDragEnter={(e) => handleDragEnter(e, poster.id)}
                   onDrop={(e) => handleDrop(e, poster.id)}
@@ -304,7 +328,6 @@ export default function App() {
               ))}
             </div>
           ) : (
-            /* Elegant Empty State Card */
             <motion.div
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
@@ -332,7 +355,6 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* 5. SMOOTH MASONRY INFINITE LOAD TRIGGER */}
         {hasMore && (
           <div className="mt-16 flex justify-center">
             <button
@@ -358,7 +380,6 @@ export default function App() {
 
       </main>
 
-      {/* 6. Pure, humble bottom credit footer */}
       <footer className="border-t border-neutral-250 bg-white px-6 lg:px-12 py-8 mt-20 text-center">
         <div className="mx-auto max-w-7xl flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="font-display text-[10px] tracking-widest text-[#8E8C84] uppercase">
@@ -372,7 +393,6 @@ export default function App() {
         </div>
       </footer>
 
-      {/* 7. Detailed Exhibition Placard Model View */}
       {selectedPoster && (
         <PosterDetailModal
           isOpen={isDetailOpen}
@@ -385,10 +405,9 @@ export default function App() {
         />
       )}
 
-      {/* 8. Create / Register Forms Overlay */}
       <AddPosterModal
         isOpen={isAddOpen}
-        onClose={() => setIsAddOpen(true && setIsAddOpen(false))}
+        onClose={() => setIsAddOpen(false)}
         onAddPoster={handleAddPoster}
       />
 
